@@ -38,10 +38,18 @@ const uid = p => p + crypto.randomBytes(5).toString('hex');
 /* ---------- auth (scrypt + cookie sessions) ---------- */
 function hash(pw) { const s = crypto.randomBytes(8).toString('hex'); return s + ':' + crypto.scryptSync(pw, s, 32).toString('hex'); }
 function verify(pw, h) { const [s, k] = h.split(':'); return crypto.timingSafeEqual(Buffer.from(k, 'hex'), crypto.scryptSync(pw, s, 32)); }
-const sessions = new Map();
 app.use((req, res, next) => {
   const c = Object.fromEntries((req.headers.cookie || '').split(';').filter(Boolean).map(x => x.trim().split('=')));
-  req.db = load(); req.user = req.db.users.find(u => u.id === sessions.get(c.sid)) || null;
+  req.db = load();
+  // Keep the session in a signed, HttpOnly cookie. An in-memory session map
+  // loses every login between Vercel serverless invocations.
+  const [sessionUserId, sessionSignature] = (c.sid || '').split('.');
+  const sessionUser = req.db.users.find(u => u.id === sessionUserId);
+  const expectedSignature = sessionUser && crypto.createHmac('sha256', sessionUser.pass).update(sessionUser.id).digest('hex');
+  const supplied = Buffer.from(sessionSignature || '');
+  const expected = Buffer.from(expectedSignature || '');
+  req.user = sessionUser && supplied.length === expected.length && expected.length > 0 &&
+    crypto.timingSafeEqual(supplied, expected) ? sessionUser : null;
   res.locals.user = req.user; res.locals.cities = CITIES; res.locals.today = new Date().toISOString().slice(0, 10);
   res.locals.fee = SERVICE_FEE; res.locals.v = {}; res.locals.q = {}; res.locals.error = null; res.locals.path = req.path;
   next();
@@ -130,7 +138,10 @@ app.post('/login', (req, res) => {
   login(res, u); res.redirect(next);
 });
 app.get('/logout', (req, res) => { res.setHeader('Set-Cookie', 'sid=; Path=/; Max-Age=0'); res.redirect('/'); });
-function login(res, u) { const t = crypto.randomBytes(24).toString('hex'); sessions.set(t, u.id); res.setHeader('Set-Cookie', `sid=${t}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`); }
+function login(res, u) {
+  const signature = crypto.createHmac('sha256', u.pass).update(u.id).digest('hex');
+  res.setHeader('Set-Cookie', `sid=${u.id}.${signature}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
+}
 
 app.use((req, res) => res.status(404).render('message', { title: '404', text: 'This page could not be found.' }));
 // Vercel imports the Express app as a serverless function; local runs still
