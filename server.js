@@ -10,11 +10,14 @@ const PORT = process.env.PORT || 3000;
 const DB_FILE = process.env.VERCEL
   ? path.join('/tmp', 'navonavocar-db.json')
   : path.join(__dirname, 'data', 'db.json');
+const UPLOAD_DIR = process.env.VERCEL
+  ? path.join('/tmp', 'navonavocar-uploads')
+  : path.join(__dirname, 'public', 'uploads');
 const SERVICE_FEE = 0.1;
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: '4mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const CITIES = ['Ahmedabad','Surat','Vadodara','Rajkot','Gandhinagar','Mumbai','Pune','Nashik','Delhi','Gurgaon','Noida','Jaipur','Chandigarh','Meerut','Ghaziabad','Rohtak','Bengaluru','Hyderabad','Chennai','Lucknow','Indore','Bhopal','Udaipur','Kolkata'];
@@ -39,7 +42,9 @@ const uid = p => p + crypto.randomBytes(5).toString('hex');
 function hash(pw) { const s = crypto.randomBytes(8).toString('hex'); return s + ':' + crypto.scryptSync(pw, s, 32).toString('hex'); }
 function verify(pw, h) { const [s, k] = h.split(':'); return crypto.timingSafeEqual(Buffer.from(k, 'hex'), crypto.scryptSync(pw, s, 32)); }
 app.use((req, res, next) => {
-  const c = Object.fromEntries((req.headers.cookie || '').split(';').filter(Boolean).map(x => x.trim().split('=')));
+  const c = Object.fromEntries((req.headers.cookie || '').split(';').filter(Boolean).map(x => {
+    const i = x.indexOf('='); return i < 0 ? [x.trim(), ''] : [x.slice(0, i).trim(), decodeURIComponent(x.slice(i + 1).trim())];
+  }));
   req.db = load();
   // Keep the session in a signed, HttpOnly cookie. An in-memory session map
   // loses every login between Vercel serverless invocations.
@@ -58,6 +63,11 @@ const need = (req, res, next) => req.user ? next() : res.redirect('/login?next='
 const withSeatsLeft = (db, r) => ({ ...r, left: r.seats - db.bookings.filter(b => b.rideId === r.id && b.status === 'confirmed').reduce((a, b) => a + b.seats, 0), driver: db.users.find(u => u.id === r.driverId) });
 
 /* ---------- pages ---------- */
+app.get('/uploads/:filename', (req, res, next) => {
+  if (!/^profile-[a-f0-9]+\.(png|jpe?g|webp)$/.test(req.params.filename)) return next();
+  res.sendFile(path.join(UPLOAD_DIR, req.params.filename), err => { if (err && !res.headersSent) next(); });
+});
+
 app.get('/', (req, res) => {
   const routes = [...new Map(req.db.rides.map(r => [r.from + r.to, r])).values()].slice(0, 6);
   res.render('home', { routes });
@@ -125,10 +135,38 @@ app.post('/alerts', (req, res) => {
 
 app.get('/register', (req, res) => res.render('auth', { mode: 'register', next: req.query.next || '/' }));
 app.post('/register', (req, res) => {
-  const { name, email, phone, password } = req.body; const next = req.body.next || '/';
-  const bad = !name || !/\S+@\S+\.\S+/.test(email || '') || (password || '').length < 6 ? 'Enter your name, a valid email and a password of at least 6 characters.' : req.db.users.some(u => u.email === email.toLowerCase()) ? 'An account with this email already exists.' : null;
-  if (bad) return res.render('auth', { mode: 'register', next, error: bad, v: req.body });
-  const u = { id: uid('u'), name: name.trim(), email: email.toLowerCase(), phone: phone || '', pass: hash(password) };
+  const { name, email, phone, password, photoData } = req.body; const next = req.body.next || '/';
+  const emailAddress = (email || '').trim().toLowerCase();
+  const passwordValid = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s]).{8,}$/.test(password || '');
+  let bad = !name || !name.trim() ? 'Please enter your full name.'
+    : !/^\S+@\S+\.\S+$/.test(emailAddress) ? 'Please enter a valid email address.'
+    : !/^\d{10}$/.test(phone || '') ? 'Mobile number must contain exactly 10 digits.'
+    : !passwordValid ? 'Password must be at least 8 characters and include uppercase, lowercase, number and special character.'
+    : req.db.users.some(u => u.email === emailAddress) ? 'An account with this email already exists.' : null;
+  let photo = null;
+  if (!bad) {
+    const match = /^data:image\/(png|jpeg|jpg|webp);base64,([A-Za-z0-9+/]+=*)$/.exec(photoData || '');
+    if (!match) bad = 'Please upload a PNG, JPG or WEBP profile photo.';
+    else {
+      const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+      const bytes = Buffer.from(match[2], 'base64');
+      if (!bytes.length || bytes.length > 2 * 1024 * 1024) bad = 'Profile photo must be smaller than 2 MB.';
+      else {
+        const isPng = bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+        const isJpg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+        const isWebp = bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP';
+        if (!(isPng && ext === 'png') && !(isJpg && ext === 'jpg') && !(isWebp && ext === 'webp')) bad = 'The selected file is not a valid image.';
+        else {
+          const filename = `profile-${crypto.randomBytes(12).toString('hex')}.${ext}`;
+          fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+          fs.writeFileSync(path.join(UPLOAD_DIR, filename), bytes);
+          photo = `/uploads/${filename}`;
+        }
+      }
+    }
+  }
+  if (bad) return res.render('auth', { mode: 'register', next, error: bad, v: { name, email, phone } });
+  const u = { id: uid('u'), name: name.trim(), email: emailAddress, phone, photo, pass: hash(password) };
   req.db.users.push(u); save(req.db); login(res, u); res.redirect(next);
 });
 app.get('/login', (req, res) => res.render('auth', { mode: 'login', next: req.query.next || '/' }));
@@ -140,7 +178,7 @@ app.post('/login', (req, res) => {
 app.get('/logout', (req, res) => { res.setHeader('Set-Cookie', 'sid=; Path=/; Max-Age=0'); res.redirect('/'); });
 function login(res, u) {
   const signature = crypto.createHmac('sha256', u.pass).update(u.id).digest('hex');
-  res.setHeader('Set-Cookie', `sid=${u.id}.${signature}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
+  res.setHeader('Set-Cookie', `sid=${u.id}.${signature}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${process.env.VERCEL ? '; Secure' : ''}`);
 }
 
 app.use((req, res) => res.status(404).render('message', { title: '404', text: 'This page could not be found.' }));

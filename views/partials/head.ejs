@@ -19,7 +19,7 @@
     <a href="/search" class="<%= path==='/search'?'on':'' %>">Search</a>
     <a href="/offer" class="btn small">Offer a ride</a>
     <% if (user) { %>
-      <a href="/my-rides">My rides</a><a href="/logout" class="muted">Logout (<%= user.name.split(' ')[0] %>)</a>
+      <a href="/my-rides">My rides</a><a href="/logout" class="muted logout-link"><% if (user.photo) { %><img class="nav-avatar" src="<%= user.photo %>" alt=""><% } else { %><span class="nav-avatar nav-avatar-fallback"><%= user.name.charAt(0).toUpperCase() %></span><% } %><span>Logout (<%= user.name.split(' ')[0] %>)</span></a>
     <% } else { %>
       <a href="/login">Log in</a><a href="/register" class="btn small ghost">Sign up</a>
     <% } %>

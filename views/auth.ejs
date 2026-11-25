@@ -16,20 +16,23 @@
       <p class="sub"><%= reg ? "It's free and takes less than a minute." : 'Log in to book rides and manage your trips.' %></p>
       <% if (typeof error!=='undefined' && error) { %><p class="err" role="alert"><%= error %></p><% } %>
 
-      <form class="form" method="post" action="/<%= mode %>">
+      <form class="form" method="post" action="/<%= mode %>"<%= reg ? ' data-register-form novalidate' : '' %>>
         <input type="hidden" name="next" value="<%= next %>">
+        <% if (reg) { %><input type="hidden" name="photoData" data-photo-data><% } %>
         <% if (reg) { %>
-          <label>Full name<input name="name" autocomplete="name" required value="<%= v.name||'' %>" placeholder="e.g. Amit Patel"></label>
+          <label>Full name<input name="name" autocomplete="name" required value="<%= v.name||'' %>" placeholder="e.g. Amit Patel"><small class="field-error" data-name-error></small></label>
         <% } %>
-        <label>Email<input type="email" name="email" autocomplete="email" inputmode="email" required value="<%= v.email||'' %>" placeholder="you@example.com"></label>
+        <label>Email<input type="email" name="email" autocomplete="email" inputmode="email" required value="<%= v.email||'' %>" placeholder="you@example.com"><% if (reg) { %><small class="field-error" data-email-error></small><% } %></label>
         <% if (reg) { %>
-          <label>Mobile number <em>(optional)</em><input name="phone" type="tel" autocomplete="tel" inputmode="tel" value="<%= v.phone||'' %>" placeholder="10-digit number"></label>
+          <label>Mobile number<input name="phone" type="tel" autocomplete="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" minlength="10" required value="<%= v.phone||'' %>" placeholder="10-digit number"><small class="field-error" data-phone-error></small></label>
+          <label>Profile photo<input name="photo" type="file" accept="image/png,image/jpeg,image/webp" required data-profile-photo><small class="hint">PNG, JPG or WEBP; maximum 2 MB.</small><small class="field-error" data-photo-error></small></label>
         <% } %>
         <label>Password
           <span class="pw">
-            <input type="password" name="password" required minlength="6" autocomplete="<%= reg ? 'new-password' : 'current-password' %>" placeholder="<%= reg ? 'At least 6 characters' : 'Your password' %>">
+            <input type="password" name="password" required <%= reg ? 'minlength="8" pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9\\s]).{8,}"' : '' %> autocomplete="<%= reg ? 'new-password' : 'current-password' %>" placeholder="<%= reg ? 'Create a strong password' : 'Your password' %>">
             <button type="button" class="pw-toggle" aria-label="Show password">Show</button>
           </span>
+          <% if (reg) { %><small class="hint">At least 8 characters, with uppercase, lowercase, a number and a symbol.</small><small class="field-error" data-password-error></small><% } %>
         </label>
         <button class="btn block lg"><%= reg ? 'Create account' : 'Log in' %></button>
       </form>
