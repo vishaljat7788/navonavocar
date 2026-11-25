@@ -5,7 +5,11 @@ const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DB_FILE = path.join(__dirname, 'data', 'db.json');
+// Vercel's deployment filesystem is read-only. /tmp is writable, though it is
+// ephemeral; use a persistent database before relying on accounts in production.
+const DB_FILE = process.env.VERCEL
+  ? path.join('/tmp', 'navonavocar-db.json')
+  : path.join(__dirname, 'data', 'db.json');
 const SERVICE_FEE = 0.1;
 
 app.set('view engine', 'ejs');
@@ -129,4 +133,8 @@ app.get('/logout', (req, res) => { res.setHeader('Set-Cookie', 'sid=; Path=/; Ma
 function login(res, u) { const t = crypto.randomBytes(24).toString('hex'); sessions.set(t, u.id); res.setHeader('Set-Cookie', `sid=${t}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`); }
 
 app.use((req, res) => res.status(404).render('message', { title: '404', text: 'This page could not be found.' }));
-app.listen(PORT, () => console.log(`NavoNavoCar is running at http://localhost:${PORT}`));
+// Vercel imports the Express app as a serverless function; local runs still
+// start an HTTP listener.
+if (require.main === module) app.listen(PORT, () => console.log(`NavoNavoCar is running at http://localhost:${PORT}`));
+
+module.exports = app;
